@@ -20,23 +20,23 @@ on:
       DEVICE_TREE:
         description: 'OrangeFox Device Tree'
         required: true
-        default: 'https://github.com/cd-Crypton/custom_recovery_tree_realme_nashc'
+        default: 'https://github.com/Carckv2/recovery_device_water.git'
       DEVICE_TREE_BRANCH:
         description: 'OrangeFox Device Tree Branch'
         required: true
-        default: 'android-12.1'
+        default: 'main'
       DEVICE_PATH:
         description: 'Specify your Device Path'
         required: true
-        default: 'device/realme/nashc'
+        default: 'device/xiaomi/water'
       DEVICE_NAME:
         description: 'Specify your Device Codename'
         required: true
-        default: 'nashc'
+        default: 'water'
       BUILD_TARGET:
         description: 'Specify your Build Target'
         required: true
-        default: 'recovery'
+        default: 'boot'
         type: choice
         options:
         - boot
@@ -46,7 +46,7 @@ on:
 jobs:
   build:
     name: Build OFR by ${{ github.actor }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     permissions:
