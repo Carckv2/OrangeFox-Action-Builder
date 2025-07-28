@@ -1,4 +1,4 @@
-name: Full ROM Build
+name: Full ROM Build with GitHub Release and Ccache
 
 on:
   workflow_dispatch:
@@ -8,131 +8,151 @@ on:
         required: true
         default: 'https://github.com/LineageOS/android.git'
       MANIFEST_BRANCH:
-        description: 'Manifest Branch'
+        description: 'ROM Manifest Branch'
         required: true
         default: 'lineage-20.0'
-      DEVICE_CODENAME:
-        description: 'Device Codename'
-        required: true
-        default: 'water'
+        type: choice
+        options:
+          - lineage-20.0
+          - lineage-19.1
       DEVICE_TREE:
-        description: 'Device Tree URL'
+        description: 'Device Tree repo URL'
         required: true
+        default: 'https://github.com/Carckv2/new_water_dt.git'
       DEVICE_TREE_BRANCH:
         description: 'Device Tree Branch'
         required: true
-        default: 'lineage-20.0'
+        default: 'patch-1'
       VENDOR_TREE:
-        description: 'Vendor Tree URL'
-        required: true
+        description: 'Vendor Tree repo URL (optional)'
+        required: false
+        default: ''
       VENDOR_TREE_BRANCH:
-        description: 'Vendor Tree Branch'
-        required: true
-        default: 'lineage-20.0'
+        description: 'Vendor Tree Branch (optional)'
+        required: false
+        default: ''
       KERNEL_TREE:
-        description: 'Kernel Tree URL'
+        description: 'Kernel Tree repo URL (optional)'
+        required: false
+        default: ''
+      KERNEL_TREE_BRANCH:
+        description: 'Kernel Tree Branch (optional)'
+        required: false
+        default: ''
+      DEVICE_CODENAME:
+        description: 'Device Codename (e.g. nashc)'
         required: true
-      KERNEL_BRANCH:
-        description: 'Kernel Branch'
-        required: true
-        default: 'lineage-20.0'
-      BUILD_TYPE:
-        description: 'Build Variant'
-        required: true
-        default: 'userdebug'
-        type: choice
-        options:
-          - user
-          - userdebug
-          - eng
+        default: 'nashc'
 
 jobs:
   build:
-    name: Build ROM
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      SOURCEFORGE_SSH: ${{ secrets.SOURCEFORGE_SSH }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 10G
+      CCACHE_COMPRESS: 1
+      CCACHE_COMPRESSLEVEL: 6
+      CCACHE_NOCOMPRESS: ''
+      CCACHE_LOGFILE: ${{ github.workspace }}/ccache.log
 
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up swap
+    - name: Setup Swap Space
       uses: pierotofy/set-swap-space@master
-      with: swap-size-gb: 24
+      with:
+        swap-size-gb: 24
 
-    - name: Install Dependencies
+    - name: Install Build Dependencies
       run: |
-        sudo apt update
-        sudo apt install -y openjdk-11-jdk repo git-core gnupg flex bison build-essential \
-        zip curl zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev \
-        libx11-dev lib32z-dev ccache libgl1-mesa-dev libxml2-utils xsltproc unzip \
-        python-is-python3 python3-pip
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential curl flex git gnupg gperf imagemagick lib32ncurses5-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop openjdk-11-jdk pngcrush repo rsync schedtool squashfs-tools xsltproc zip zlib1g-dev ccache
 
-    - name: Sync ROM Sources
+    - name: Setup repo tool
       run: |
-        mkdir -p ~/rom && cd ~/rom
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
+
+    - name: Initialize Repo Manifest
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/rom
+        cd $GITHUB_WORKSPACE/rom
         repo init -u ${{ inputs.MANIFEST_URL }} -b ${{ inputs.MANIFEST_BRANCH }}
-        repo sync -c --no-tags --no-clone-bundle -j$(nproc)
+
+    - name: Sync Repo
+      run: |
+        cd $GITHUB_WORKSPACE/rom
+        repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
 
     - name: Clone Device Tree
       run: |
-        cd ~/rom
-        git clone ${{ inputs.DEVICE_TREE }} -b ${{ inputs.DEVICE_TREE_BRANCH }} device/xiaomi/${{ inputs.DEVICE_CODENAME }}
+        cd $GITHUB_WORKSPACE/rom
+        mkdir -p device/realme
+        git clone -b ${{ inputs.DEVICE_TREE_BRANCH }} ${{ inputs.DEVICE_TREE }} device/realme/${{ inputs.DEVICE_CODENAME }}
 
-    - name: Clone Vendor Tree
+    - name: Clone Vendor Tree (Optional)
+      if: ${{ inputs.VENDOR_TREE != '' }}
       run: |
-        cd ~/rom
-        git clone ${{ inputs.VENDOR_TREE }} -b ${{ inputs.VENDOR_TREE_BRANCH }} vendor/xiaomi/${{ inputs.DEVICE_CODENAME }}
+        cd $GITHUB_WORKSPACE/rom
+        mkdir -p vendor/realme
+        git clone -b ${{ inputs.VENDOR_TREE_BRANCH }} ${{ inputs.VENDOR_TREE }} vendor/realme/${{ inputs.DEVICE_CODENAME }}
 
-    - name: Clone Kernel Tree
+    - name: Clone Kernel Tree (Optional)
+      if: ${{ inputs.KERNEL_TREE != '' }}
       run: |
-        cd ~/rom
-        git clone ${{ inputs.KERNEL_TREE }} -b ${{ inputs.KERNEL_BRANCH }} kernel/xiaomi/${{ inputs.DEVICE_CODENAME }}
+        cd $GITHUB_WORKSPACE/rom
+        mkdir -p kernel/realme/${{ inputs.DEVICE_CODENAME }}
+        git clone -b ${{ inputs.KERNEL_TREE_BRANCH }} ${{ inputs.KERNEL_TREE }} kernel/realme/${{ inputs.DEVICE_CODENAME }}
+
+    - name: Configure ccache
+      run: |
+        ccache --max-size=${{ env.CCACHE_MAXSIZE }}
+        ccache --show-stats
+
+    - name: Setup Build Environment
+      run: |
+        cd $GITHUB_WORKSPACE/rom
+        source build/envsetup.sh
+
+    - name: Lunch Device
+      run: |
+        cd $GITHUB_WORKSPACE/rom
+        lunch lineage_${{ inputs.DEVICE_CODENAME }}-userdebug
 
     - name: Build ROM
       run: |
-        cd ~/rom
-        source build/envsetup.sh
-        lunch lineage_${{ inputs.DEVICE_CODENAME }}-${{ inputs.BUILD_TYPE }}
+        cd $GITHUB_WORKSPACE/rom
         mka bacon -j$(nproc)
-      continue-on-error: false
 
-    - name: Set BUILD_DATE
-      run: echo "BUILD_DATE=$(date +%Y%m%d)" >> $GITHUB_ENV
+    - name: Show ccache stats after build
+      run: |
+        ccache --show-stats
 
-    - name: Upload to GitHub Release
-      uses: softprops/action-gh-release@v2
+    - name: Save Build Date and Device Codename to Env
+      run: |
+        echo "BUILD_DATE=$(TZ=Asia/Manila date +%Y%m%d)" >> $GITHUB_ENV
+        echo "DEVICE_CODENAME=${{ inputs.DEVICE_CODENAME }}" >> $GITHUB_ENV
+
+    - name: Upload Build Logs
+      uses: actions/upload-artifact@v3
       with:
-        files: ~/rom/out/target/product/${{ inputs.DEVICE_CODename }}/*.zip
-        name: "Full ROM for ${{ inputs.DEVICE_CODENAME }} – ${{ env.BUILD_DATE }}"
+        name: build-logs-${{ github.run_id }}
+        path: ${{ github.workspace }}/ccache.log
+
+    - name: Upload ROM to GitHub Release
+      uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: |
+          ${{ github.workspace }}/rom/out/target/product/${{ env.DEVICE_CODENAME }}/*.zip
+          ${{ github.workspace }}/rom/out/target/product/${{ env.DEVICE_CODENAME }}/*.img
+        name: "LineageOS ROM for ${{ env.DEVICE_CODENAME }} // ${{ env.BUILD_DATE }}"
         tag_name: ${{ github.run_id }}
         body: |
-          **Manifest:** ${{ inputs.MANIFEST_URL }} @${{ inputs.MANIFEST_BRANCH }}
-          **Device/Vendor/Kernel trees** included
-          **Build date:** ${{ env.BUILD_DATE }}
-
-    - name: Upload to SourceForge
-      if: success()
-      run: |
-        # configure SSH: SOURCEFORGE_SSH contains private key
-        mkdir -p ~/.ssh && echo "$SOURCEFORGE_SSH" > ~/.ssh/id_rsa && chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan upload.sourceforge.net >> ~/.ssh/known_hosts
-        scp ~/rom/out/target/product/${{ inputs.DEVICE_CODENAME }}/*.zip username@upload.sourceforge.net:/home/frs/project/yourproject/
-      shell: bash
-
-    - name: Send Telegram Notification
-      if: always()
-      uses: james-kua/notify-telegram-action@main
-      with:
-        workflow_name: 'ROM Build'
-        to: ${{ secrets.TELEGRAM_CHAT_ID }}
-        token: ${{ secrets.TELEGRAM_TOKEN }}
-        status: ${{ job.status }}
-        message_format: markdown
-        disable_preview: true
-        timezone: 'Asia/Kathmandu'
+          ## LineageOS ROM Build - Unofficial
+          Branch: ${{ inputs.MANIFEST_BRANCH }}
+          Device: ${{ env.DEVICE_CODENAME }}
+          Build Date: ${{ env.BUILD_DATE }}
