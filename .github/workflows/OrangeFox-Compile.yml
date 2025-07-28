@@ -42,7 +42,7 @@ on:
       DEVICE_CODENAME:
         description: 'Device Codename (e.g. nashc)'
         required: true
-        default: 'nashc'
+        default: 'water'
 
 jobs:
   build:
@@ -73,21 +73,26 @@ jobs:
         mkdir -p ~/bin
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
-        echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
+      # Add ~/bin to PATH immediately for all next steps
+    - name: Add repo to PATH
+      run: echo "$HOME/bin" >> $GITHUB_PATH
 
     - name: Initialize Repo Manifest
       run: |
+        set -e
         mkdir -p $GITHUB_WORKSPACE/rom
         cd $GITHUB_WORKSPACE/rom
         repo init -u ${{ inputs.MANIFEST_URL }} -b ${{ inputs.MANIFEST_BRANCH }}
 
     - name: Sync Repo
       run: |
+        set -e
         cd $GITHUB_WORKSPACE/rom
-        repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
+        repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags --verbose
 
     - name: Clone Device Tree
       run: |
+        set -e
         cd $GITHUB_WORKSPACE/rom
         mkdir -p device/realme
         git clone -b ${{ inputs.DEVICE_TREE_BRANCH }} ${{ inputs.DEVICE_TREE }} device/realme/${{ inputs.DEVICE_CODENAME }}
@@ -95,6 +100,7 @@ jobs:
     - name: Clone Vendor Tree (Optional)
       if: ${{ inputs.VENDOR_TREE != '' }}
       run: |
+        set -e
         cd $GITHUB_WORKSPACE/rom
         mkdir -p vendor/realme
         git clone -b ${{ inputs.VENDOR_TREE_BRANCH }} ${{ inputs.VENDOR_TREE }} vendor/realme/${{ inputs.DEVICE_CODENAME }}
@@ -102,27 +108,35 @@ jobs:
     - name: Clone Kernel Tree (Optional)
       if: ${{ inputs.KERNEL_TREE != '' }}
       run: |
+        set -e
         cd $GITHUB_WORKSPACE/rom
         mkdir -p kernel/realme/${{ inputs.DEVICE_CODENAME }}
         git clone -b ${{ inputs.KERNEL_TREE_BRANCH }} ${{ inputs.KERNEL_TREE }} kernel/realme/${{ inputs.DEVICE_CODENAME }}
+
+    - name: Cache ccache directory
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ${{ runner.os }}-ccache-${{ inputs.DEVICE_CODENAME }}-${{ inputs.MANIFEST_BRANCH }}-${{ hashFiles('**/device/**', '**/vendor/**', '**/kernel/**') }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-${{ inputs.DEVICE_CODENAME }}-${{ inputs.MANIFEST_BRANCH }}-
+          ${{ runner.os }}-ccache-${{ inputs.DEVICE_CODENAME }}-
+          ${{ runner.os }}-ccache-
 
     - name: Configure ccache
       run: |
         ccache --max-size=${{ env.CCACHE_MAXSIZE }}
         ccache --show-stats
 
-    - name: Setup Build Environment
+    - name: Setup Build Environment and Lunch
       run: |
+        set -e
         cd $GITHUB_WORKSPACE/rom
-        source build/envsetup.sh
-
-    - name: Lunch Device
-      run: |
-        cd $GITHUB_WORKSPACE/rom
-        lunch lineage_${{ inputs.DEVICE_CODENAME }}-userdebug
+        bash -c "source build/envsetup.sh && lunch lineage_${{ inputs.DEVICE_CODENAME }}-userdebug"
 
     - name: Build ROM
       run: |
+        set -e
         cd $GITHUB_WORKSPACE/rom
         mka bacon -j$(nproc)
 
