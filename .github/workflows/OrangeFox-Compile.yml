@@ -1,4 +1,4 @@
-name: Full ROM Build with GitHub Release and Ccache
+name: Full ROM Build with GitHub Release and Ccache (Fixed)
 
 on:
   workflow_dispatch:
@@ -42,7 +42,7 @@ on:
       DEVICE_CODENAME:
         description: 'Device Codename (e.g. nashc)'
         required: true
-        default: 'water'
+        default: 'nashc'
 
 jobs:
   build:
@@ -66,33 +66,44 @@ jobs:
     - name: Install Build Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y bc bison build-essential curl flex git gnupg gperf imagemagick lib32ncurses5-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop openjdk-11-jdk pngcrush repo rsync schedtool squashfs-tools xsltproc zip zlib1g-dev ccache
+        sudo apt-get install -y bc bison build-essential curl flex git gnupg gperf imagemagick lib32ncurses5-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop openjdk-11-jdk pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev ccache
 
     - name: Setup repo tool
       run: |
         mkdir -p ~/bin
         curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
         chmod a+x ~/bin/repo
-      # Add ~/bin to PATH immediately for all next steps
-    - name: Add repo to PATH
-      run: echo "$HOME/bin" >> $GITHUB_PATH
+
+    - name: Debug repo installation
+      run: |
+        which repo || echo "repo not in PATH"
+        ls -l ~/bin/repo
+        ~/bin/repo --version || echo "repo command failed"
 
     - name: Initialize Repo Manifest
       run: |
         set -e
         mkdir -p $GITHUB_WORKSPACE/rom
         cd $GITHUB_WORKSPACE/rom
-        repo init -u ${{ inputs.MANIFEST_URL }} -b ${{ inputs.MANIFEST_BRANCH }}
+        ~/bin/repo init -u ${{ inputs.MANIFEST_URL }} -b ${{ inputs.MANIFEST_BRANCH }}
 
-    - name: Sync Repo
+    - name: Debug .repo folder
+      run: |
+        ls -la $GITHUB_WORKSPACE/rom
+        ls -la $GITHUB_WORKSPACE/rom/.repo || echo ".repo folder is missing!"
+
+    - name: Sync Repo (with retries)
       run: |
         set -e
         cd $GITHUB_WORKSPACE/rom
-        repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags --verbose
+        for i in 1 2 3; do
+          ~/bin/repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags --verbose && break
+          echo "Retrying repo sync ($i/3)..."
+          sleep 30
+        done
 
     - name: Clone Device Tree
       run: |
-        set -e
         cd $GITHUB_WORKSPACE/rom
         mkdir -p device/realme
         git clone -b ${{ inputs.DEVICE_TREE_BRANCH }} ${{ inputs.DEVICE_TREE }} device/realme/${{ inputs.DEVICE_CODENAME }}
@@ -100,7 +111,6 @@ jobs:
     - name: Clone Vendor Tree (Optional)
       if: ${{ inputs.VENDOR_TREE != '' }}
       run: |
-        set -e
         cd $GITHUB_WORKSPACE/rom
         mkdir -p vendor/realme
         git clone -b ${{ inputs.VENDOR_TREE_BRANCH }} ${{ inputs.VENDOR_TREE }} vendor/realme/${{ inputs.DEVICE_CODENAME }}
@@ -108,7 +118,6 @@ jobs:
     - name: Clone Kernel Tree (Optional)
       if: ${{ inputs.KERNEL_TREE != '' }}
       run: |
-        set -e
         cd $GITHUB_WORKSPACE/rom
         mkdir -p kernel/realme/${{ inputs.DEVICE_CODENAME }}
         git clone -b ${{ inputs.KERNEL_TREE_BRANCH }} ${{ inputs.KERNEL_TREE }} kernel/realme/${{ inputs.DEVICE_CODENAME }}
@@ -117,7 +126,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ${{ env.CCACHE_DIR }}
-        key: ${{ runner.os }}-ccache-${{ inputs.DEVICE_CODENAME }}-${{ inputs.MANIFEST_BRANCH }}-${{ hashFiles('**/device/**', '**/vendor/**', '**/kernel/**') }}
+        key: ${{ runner.os }}-ccache-${{ inputs.DEVICE_CODENAME }}-${{ inputs.MANIFEST_BRANCH }}
         restore-keys: |
           ${{ runner.os }}-ccache-${{ inputs.DEVICE_CODENAME }}-${{ inputs.MANIFEST_BRANCH }}-
           ${{ runner.os }}-ccache-${{ inputs.DEVICE_CODENAME }}-
