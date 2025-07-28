@@ -136,7 +136,7 @@ jobs:
         echo "DEVICE_CODENAME=${{ inputs.DEVICE_CODENAME }}" >> $GITHUB_ENV
 
     - name: Upload Build Logs
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: build-logs-${{ github.run_id }}
         path: ${{ github.workspace }}/ccache.log
